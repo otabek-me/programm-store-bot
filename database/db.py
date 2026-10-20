@@ -61,6 +61,11 @@ CREATE TABLE IF NOT EXISTS programs (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+CREATE TABLE IF NOT EXISTS program_categories (
+    program_id INTEGER NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
+    category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    PRIMARY KEY (program_id, category_id)
+);
 CREATE TABLE IF NOT EXISTS download_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(user_id),
@@ -105,6 +110,7 @@ CREATE TABLE IF NOT EXISTS program_drafts (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_programs_active_category ON programs(is_active, category_id);
+CREATE INDEX IF NOT EXISTS idx_program_categories_category ON program_categories(category_id, program_id);
 CREATE INDEX IF NOT EXISTS idx_programs_created ON programs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_download_logs_date ON download_logs(downloaded_at);
 CREATE INDEX IF NOT EXISTS idx_requests_status ON software_requests(status, created_at DESC);
@@ -128,5 +134,9 @@ async def init_db(db_path: str | Path) -> None:
         await db.executemany(
             "INSERT OR IGNORE INTO categories(name) VALUES (?)",
             ((name,) for name in DEFAULT_CATEGORIES),
+        )
+        await db.execute(
+            """INSERT OR IGNORE INTO program_categories(program_id, category_id)
+            SELECT id, category_id FROM programs WHERE category_id IS NOT NULL"""
         )
         await db.commit()

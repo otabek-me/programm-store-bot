@@ -26,6 +26,39 @@ async def test_program_file_id_is_saved_without_binary(db_path):
 
 
 @pytest.mark.asyncio
+async def test_program_can_belong_to_multiple_categories(db_path):
+    category_ids = [row["id"] for row in (await categories(db_path))[:2]]
+    program_id = await create_program(db_path, {
+        "name": "Multi-category app", "description": "Description",
+        "category_ids": category_ids, "file_id": "fid", "file_unique_id": "fuid",
+    })
+
+    program = await get_program(db_path, program_id)
+    results = [await search_programs(db_path, "", category_id=category_id) for category_id in category_ids]
+
+    assert program["category_name"] == ", ".join(row["name"] for row in (await categories(db_path))[:2])
+    assert all(any(row["id"] == program_id for row in result) for result in results)
+
+
+@pytest.mark.asyncio
+async def test_legacy_program_category_is_migrated(db_path):
+    from database.db import connect, init_db
+
+    category_id = (await categories(db_path))[0]["id"]
+    program_id = await create_program(db_path, {
+        "name": "Legacy app", "description": "Description", "category_id": category_id,
+        "file_id": "fid", "file_unique_id": "fuid",
+    })
+    async with await connect(db_path) as db:
+        await db.execute("DROP TABLE program_categories")
+        await db.commit()
+
+    await init_db(db_path)
+    found = await search_programs(db_path, "", category_id=category_id)
+    assert any(row["id"] == program_id for row in found)
+
+
+@pytest.mark.asyncio
 async def test_program_can_be_searched_by_partial_name_and_synonym(db_path):
     category_id = (await categories(db_path))[0]["id"]
     await create_program(db_path, {

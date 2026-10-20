@@ -49,7 +49,7 @@ def edit_program_keyboard(program_id: int) -> InlineKeyboardMarkup:
     fields = [
         ("Nomi", "name"),
         ("Tavsif", "description"),
-        ("Kategoriya", "category_id"),
+        ("Kategoriyalar", "category_ids"),
         ("Kalit so‘zlar", "keywords"),
         ("Versiya", "version"),
         ("Operatsion tizim", "operating_system"),

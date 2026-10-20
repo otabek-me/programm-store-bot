@@ -3,7 +3,9 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import ErrorEvent
+from aiogram.types import (
+    BotCommand, BotCommandScopeChat, BotCommandScopeDefault, ErrorEvent,
+)
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from admin import broadcasts, categories, dashboard, programs, requests, settings, users
@@ -41,6 +43,17 @@ async def main() -> None:
     await init_db(config.db_path)
 
     bot = Bot(token=config.bot_token)
+    common_commands = [
+        BotCommand(command="start", description="Botni ishga tushirish"),
+        BotCommand(command="about", description="Bot haqida"),
+        BotCommand(command="cancel", description="Joriy amalni bekor qilish"),
+    ]
+    await bot.set_my_commands(common_commands, scope=BotCommandScopeDefault())
+    for admin_id in config.admin_ids:
+        await bot.set_my_commands(
+            [*common_commands, BotCommand(command="admin", description="Admin panel")],
+            scope=BotCommandScopeChat(chat_id=admin_id),
+        )
     dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher["db_path"] = str(config.db_path)
     dispatcher["admin_ids"] = config.admin_ids

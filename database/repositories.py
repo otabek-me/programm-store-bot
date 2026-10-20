@@ -50,6 +50,10 @@ async def delete_category(db_path: str, category_id: int) -> bool:
 
 
 async def create_program(db_path: str, data: dict[str, Any]) -> int:
+    category_ids = data.get("category_ids")
+    if category_ids is None:
+        category_ids = [data["category_id"]] if data.get("category_id") is not None else []
+    category_ids = list(dict.fromkeys(category_ids))
     async with await connect(db_path) as db:
         cursor = await db.execute(
             """INSERT INTO programs
@@ -57,12 +61,16 @@ async def create_program(db_path: str, data: dict[str, Any]) -> int:
              file_size, version, operating_system, keywords, is_active, is_recommended)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
             (
-                data["name"], data["description"], data.get("category_id"),
+                data["name"], data["description"], category_ids[0] if category_ids else None,
                 data["file_id"], data["file_unique_id"], data.get("file_name"),
                 data.get("mime_type"), data.get("file_size"), data.get("version"),
                 data.get("operating_system"), data.get("keywords", ""),
                 int(data.get("is_recommended", False)),
             ),
+        )
+        await db.executemany(
+            "INSERT INTO program_categories(program_id, category_id) VALUES (?, ?)",
+            ((cursor.lastrowid, category_id) for category_id in category_ids),
         )
         await db.commit()
         return cursor.lastrowid
@@ -110,8 +118,10 @@ async def list_drafts(db_path: str, admin_id: int) -> list[aiosqlite.Row]:
 
 async def get_program(db_path: str, program_id: int, active_only: bool = False) -> aiosqlite.Row | None:
     async with await connect(db_path) as db:
-        query = """SELECT p.*, c.name AS category_name FROM programs p
-        LEFT JOIN categories c ON c.id=p.category_id WHERE p.id=?"""
+        query = """SELECT p.*,
+        (SELECT group_concat(c.name, ', ') FROM program_categories pc
+        JOIN categories c ON c.id=pc.category_id WHERE pc.program_id=p.id) AS category_name
+        FROM programs p WHERE p.id=?"""
         if active_only:
             query += " AND p.is_active=1"
         cursor = await db.execute(query, (program_id,))
@@ -124,8 +134,10 @@ async def search_programs(
 ) -> list[aiosqlite.Row]:
     text = query.strip().casefold()
     sql = """SELECT p.id, p.name, p.description, p.version, p.operating_system,
-    p.downloads, p.is_recommended, p.created_at, c.name AS category_name
-    FROM programs p LEFT JOIN categories c ON c.id=p.category_id WHERE p.is_active=1"""
+    p.downloads, p.is_recommended, p.created_at,
+    (SELECT group_concat(c.name, ', ') FROM program_categories pc
+    JOIN categories c ON c.id=pc.category_id WHERE pc.program_id=p.id) AS category_name
+    FROM programs p WHERE p.is_active=1"""
     params: list[Any] = []
     if text:
         sql += """ AND (lower(p.name) LIKE ? ESCAPE '\\' OR lower(p.keywords) LIKE ? ESCAPE '\\'
@@ -134,7 +146,7 @@ async def search_programs(
         pattern = f"%{escaped}%"
         params.extend((pattern, pattern, pattern))
     if category_id is not None:
-        sql += " AND p.category_id=?"
+        sql += " AND EXISTS (SELECT 1 FROM program_categories pc WHERE pc.program_id=p.id AND pc.category_id=?)"
         params.append(category_id)
     order_by = {
         "popular": "p.downloads DESC, p.name COLLATE NOCASE",
@@ -263,6 +275,9 @@ async def toggle_program_active(db_path: str, program_id: int) -> bool:
 
 
 async def update_program_field(db_path: str, program_id: int, field: str, value: Any) -> bool:
+    if field == "category_id":
+        category_ids = [] if value is None else [value]
+        return await replace_program_categories(db_path, program_id, category_ids)
     allowed_fields = {
         "name", "description", "category_id", "keywords", "version",
         "operating_system", "file_id", "file_unique_id", "file_name", "mime_type", "file_size",
@@ -277,6 +292,24 @@ async def update_program_field(db_path: str, program_id: int, field: str, value:
         )
         await db.commit()
         return cursor.rowcount > 0
+
+
+async def replace_program_categories(db_path: str, program_id: int, category_ids: list[int]) -> bool:
+    category_ids = list(dict.fromkeys(category_ids))
+    async with await connect(db_path) as db:
+        cursor = await db.execute(
+            "UPDATE programs SET category_id=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+            (category_ids[0] if category_ids else None, program_id),
+        )
+        if cursor.rowcount == 0:
+            return False
+        await db.execute("DELETE FROM program_categories WHERE program_id=?", (program_id,))
+        await db.executemany(
+            "INSERT INTO program_categories(program_id, category_id) VALUES (?, ?)",
+            ((program_id, category_id) for category_id in category_ids),
+        )
+        await db.commit()
+        return True
 
 
 async def replace_program_file(db_path: str, program_id: int, document: Any) -> bool:
@@ -315,8 +348,10 @@ async def list_users(db_path: str, limit: int = 10, offset: int = 0) -> list[aio
 async def list_programs_admin(db_path: str, limit: int = 8, offset: int = 0) -> list[aiosqlite.Row]:
     async with await connect(db_path) as db:
         return await fetch_all(
-            db, """SELECT p.id, p.name, p.is_active, p.downloads, c.name AS category_name
-            FROM programs p LEFT JOIN categories c ON c.id=p.category_id
+            db, """SELECT p.id, p.name, p.is_active, p.downloads,
+            (SELECT group_concat(c.name, ', ') FROM program_categories pc
+            JOIN categories c ON c.id=pc.category_id WHERE pc.program_id=p.id) AS category_name
+            FROM programs p
             ORDER BY p.id DESC LIMIT ? OFFSET ?""",
             (limit, offset),
         )

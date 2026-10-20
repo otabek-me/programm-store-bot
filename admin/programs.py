@@ -8,7 +8,8 @@ from aiosqlite import Error as SQLiteError
 
 from database.repositories import (
     delete_program, get_draft, get_program, list_drafts, list_programs_admin, remove_draft, save_draft,
-    replace_program_file, search_programs, toggle_program_active, update_program_field,
+    replace_program_categories, replace_program_file, search_programs, toggle_program_active,
+    update_program_field,
 )
 from keyboards.admin import admin_menu, edit_program_keyboard
 from services.program_service import publish_program
@@ -17,6 +18,18 @@ from utils.validators import optional_text, required_text
 
 logger = logging.getLogger(__name__)
 router = Router(name="admin-programs")
+
+
+def _parse_category_ids(raw: str, available_ids: set[int]) -> list[int]:
+    if raw.strip() == "-":
+        return []
+    try:
+        category_ids = list(dict.fromkeys(int(item.strip()) for item in raw.split(",")))
+    except ValueError as exc:
+        raise ValueError("Kategoriya ID raqamlarini vergul bilan yuboring.") from exc
+    if not category_ids or any(category_id not in available_ids for category_id in category_ids):
+        raise ValueError("Kategoriya ID sini tekshiring.")
+    return category_ids
 
 
 async def _save_current_draft(state: FSMContext, db_path: str, admin_id: int) -> dict:
@@ -99,25 +112,21 @@ async def program_description(message: Message, state: FSMContext, db_path: str)
     from database.repositories import categories
     available = await categories(db_path)
     options = "\n".join(f"{row['id']}: {row['name']}" for row in available)
-    await message.answer(f"Kategoriya ID raqamini yuboring:\n{options}")
+    await message.answer(f"Kategoriya ID raqamlarini vergul bilan yuboring:\n{options}")
 
 
 @router.message(AddProgram.category)
 async def program_category(message: Message, state: FSMContext, db_path: str) -> None:
     from database.repositories import categories
 
-    raw = (message.text or "").strip()
-    try:
-        category_id = int(raw)
-    except ValueError:
-        await message.answer("Kategoriya ID raqamini butun son sifatida yuboring.")
-        return
     available = await categories(db_path)
-    if not any(row["id"] == category_id for row in available):
-        await message.answer("Bunday kategoriya topilmadi. ID ni qayta tekshiring.")
+    try:
+        category_ids = _parse_category_ids((message.text or "").strip(), {row["id"] for row in available})
+    except ValueError as exc:
+        await message.answer(str(exc))
         return
     payload = (await state.get_data())["draft_payload"]
-    payload["category_id"] = category_id
+    payload["category_ids"] = category_ids
     await state.update_data(draft_payload=payload)
     await _save_current_draft(state, db_path, message.from_user.id)
     await state.set_state(AddProgram.keywords)
@@ -239,7 +248,8 @@ async def resume_draft(callback: CallbackQuery, state: FSMContext, db_path: str)
     next_state = next(
         (fsm_state for key, fsm_state in (
             ("name", AddProgram.name), ("description", AddProgram.description),
-            ("category_id", AddProgram.category), ("keywords", AddProgram.keywords),
+            ("category_ids", AddProgram.category), ("category_id", AddProgram.category),
+            ("keywords", AddProgram.keywords),
             ("version", AddProgram.version), ("operating_system", AddProgram.operating_system),
         ) if key not in payload),
         AddProgram.confirm,
@@ -248,7 +258,7 @@ async def resume_draft(callback: CallbackQuery, state: FSMContext, db_path: str)
     prompts = {
         AddProgram.name: "Draft davom etmoqda. Dastur nomini yuboring:",
         AddProgram.description: "Draft davom etmoqda. Tavsifni yuboring:",
-        AddProgram.category: "Draft davom etmoqda. Kategoriya ID raqamini yuboring:",
+        AddProgram.category: "Draft davom etmoqda. Kategoriya ID raqamlarini vergul bilan yuboring:",
         AddProgram.keywords: "Draft davom etmoqda. Kalit so‘zlarni yuboring:",
         AddProgram.version: "Draft davom etmoqda. Versiyani yuboring:",
         AddProgram.operating_system: "Draft davom etmoqda. Operatsion tizimni yuboring:",
@@ -393,10 +403,10 @@ async def edit_program_field(callback: CallbackQuery, state: FSMContext, db_path
         prompt = "Yangi Telegram hujjatini yuboring (fayl serverga yuklab olinmaydi):"
     else:
         await state.set_state(EditProgram.value)
-        if field == "category_id":
+        if field == "category_ids":
             from database.repositories import categories
             rows = await categories(db_path)
-            prompt = "Yangi kategoriya ID sini yuboring:\n" + "\n".join(
+            prompt = "Yangi kategoriya ID raqamlarini vergul bilan yuboring (-: kategoriyasiz):\n" + "\n".join(
                 f"{row['id']}: {row['name']}" for row in rows
             )
         elif field in {"keywords", "version", "operating_system"}:
@@ -413,18 +423,18 @@ async def save_program_field(message: Message, state: FSMContext, db_path: str) 
     field = data["edit_field"]
     value = (message.text or "").strip()
     try:
-        if field == "category_id":
-            category_id = int(value)
+        if field == "category_ids":
             from database.repositories import categories
-            if not any(row["id"] == category_id for row in await categories(db_path)):
-                raise ValueError("Bunday kategoriya yo‘q.")
-            value = category_id
+            available_ids = {row["id"] for row in await categories(db_path)}
+            category_ids = _parse_category_ids(value, available_ids)
+            changed = await replace_program_categories(db_path, data["edit_program_id"], category_ids)
         elif field in {"keywords", "version", "operating_system"} and value == "-":
             value = ""
         else:
             maximum = 1500 if field == "description" else 120
             value = required_text(value, "Qiymat", maximum)
-        changed = await update_program_field(db_path, data["edit_program_id"], field, value)
+        if field != "category_ids":
+            changed = await update_program_field(db_path, data["edit_program_id"], field, value)
     except (ValueError, KeyError) as exc:
         await message.answer(str(exc) or "Qiymatni tekshiring.")
         return
