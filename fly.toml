@@ -1,0 +1,6 @@
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  app = "python bot.py"
+  
