@@ -1,13 +1,13 @@
 # Telegram dasturlar kutubxonasi
 
-Telegram ichida ishlaydigan, Python 3.12+, aiogram 3 va SQLite asosidagi dasturlar katalogi. Bot foydalanuvchiga Telegram `file_id` orqali hujjat yuboradi; faylning binary mazmunini serverga yuklab olmaydi yoki diskda saqlamaydi.
+Telegram ichida ishlaydigan, Python 3.12+, aiogram 3 va PostgreSQL asosidagi dasturlar katalogi. Bot foydalanuvchiga Telegram `file_id` orqali hujjat yuboradi; faylning binary mazmunini serverga yuklab olmaydi yoki diskda saqlamaydi.
 
 ## Imkoniyatlar
 
 - O‘zbekcha menyu, katalog, kategoriyalar, qisman moslikdagi qidiruv, kalit so‘z/sinonimlar va sahifalash.
 - Admin ID ro‘yxati bilan himoyalangan Telegram admin paneli: dasturlarni joylash/tahrirlash/yashirish, kategoriyalar, so‘rovlar, foydalanuvchilar, statistika va tasdiqli ommaviy xabar.
 - Foydalanuvchi so‘rovlari, admin holatlari va javoblarining bazada saqlanishi.
-- SQLite’ga idempotent schema bootstrap va boshlang‘ich kategoriyalar.
+- PostgreSQL schema bootstrap va boshlang‘ich kategoriyalar.
 - Yuklangan fayllar uchun uzluksiz, qayta tiklanadigan metadata draftlari.
 
 Dasturni yuklash yoki tarqatishdan oldin unga nisbatan tegishli huquqlaringiz borligiga ishonch hosil qiling.
@@ -25,7 +25,7 @@ py -3.12 -m venv .venv
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 Copy-Item .env.example .env
-- PostgreSQL schema bootstrap va boshlang‘ich kategoriyalar.
+```
 
 ### Linux
 
@@ -43,7 +43,7 @@ BotFather’da `/newbot` bilan bot ochib, tokenni `.env` dagi `BOT_TOKEN` ga yoz
 ```dotenv
 BOT_TOKEN=123456:replace_with_real_token
 ADMIN_IDS=123456789,987654321
-DB_PATH=data/bot.sqlite3
+DATABASE_URL=postgresql://user:password@host:5432/database?sslmode=require
 LOG_LEVEL=INFO
 # Ixtiyoriy: faqat shu fayl kengaytmalarini qabul qiladi; bo‘sh bo‘lsa cheklov yo‘q.
 ALLOWED_FILE_EXTENSIONS=.zip,.apk,.exe
@@ -58,10 +58,10 @@ python bot.py
 ```
 
 ```bash
-DATABASE_URL=postgresql://user:password@host:5432/database?sslmode=require
+python bot.py
 ```
 
-Birinchi ishga tushishda `DB_PATH` papkasi va SQLite jadvallari yaratiladi. Bot polling rejimida ishlaydi; ishlab chiqarish serverida jarayonni `systemd` yoki OS xizmat boshqaruvchisi orqali nazorat qiling.
+Birinchi ishga tushishda `DATABASE_URL` dagi PostgreSQL bazasida jadvallar yaratiladi. Bot polling rejimida ishlaydi; ishlab chiqarish serverida jarayonni `systemd` yoki OS xizmat boshqaruvchisi orqali nazorat qiling.
 
 Loglar konsolga yoziladi. `LOG_LEVEL` qiymati `DEBUG`, `INFO`, `WARNING`, `ERROR` yoki `CRITICAL` bo‘lishi mumkin.
 
@@ -76,35 +76,25 @@ Loglar konsolga yoziladi. `LOG_LEVEL` qiymati `DEBUG`, `INFO`, `WARNING`, `ERROR
 Telegram `file_id` ayni bot tomonidan qayta foydalaniladigan identifikator; u faylning o‘zi yoki arxiv nusxasi emas. Faylni keyin yuborish Telegram Bot API va asl fayl mavjudligiga bog‘liq. Bot faqat `file_id` orqali qayta yuboradi; `file_unique_id` qayta yuborish uchun ishlatilmaydi. Telegram limitlari Bot API va account turiga qarab o‘zgarishi mumkin; bot o‘zboshimchalik bilan fayl hajmi chegarasi belgilamaydi.
 
 ## Zaxira nusxasi va muammolar
-Birinchi ishga tushishda `DATABASE_URL` dagi PostgreSQL bazasida jadvallar yaratiladi. Bot polling rejimida ishlaydi; ishlab chiqarish serverida jarayonni `systemd` yoki OS xizmat boshqaruvchisi orqali nazorat qiling.
 
-### Eski SQLite bazasini ko‘chirish
-
-Neon PostgreSQL ulanish URL’ini `.env` dagi `DATABASE_URL` ga yozing. Keyin eski SQLite faylini bir marta import qiling:
+PostgreSQL bazasining zaxira nusxasini Neon boshqaruv paneli yoki `pg_dump` orqali oling:
 
 ```powershell
-python migrate_sqlite_to_postgres.py D:\Downloads\bot.sqlite3
-```
-
-Import foydalanuvchilar, kategoriyalar, dasturlar, yuklab olish tarixi, so‘rovlar, xabarlar, sozlamalar, draftlar va ommaviy xabar loglarini mavjud ID’lari bilan ko‘chiradi. Eski `category_id` bog‘lanishlari ham ko‘p-kategoriyali jadvalga o‘tkaziladi. Skript eski faylni o‘zgartirmaydi va qayta bajarilsa mavjud satrlarni takrorlamaydi.
-Botni to‘xtatib, `data/bot.sqlite3` faylini nusxalang; WAL rejimi ishlatilgani sababli nusxa olishdan avval to‘xtatish eng sodda xavfsiz usul:
-
-```powershell
-PostgreSQL bazasining zaxira nusxasini Neon boshqaruv paneli yoki `pg_dump` orqali oling. SQLite import manbasi `D:\Downloads\bot.sqlite3` o‘zgartirilmaydi.
-```
-
 pg_dump "$env:DATABASE_URL" -Fc -f .\data\bot.backup.dump
-cp data/bot.sqlite3 data/bot.backup.sqlite3
 ```
 
+```bash
 pg_dump "$DATABASE_URL" -Fc -f data/bot.backup.dump
+```
+
+- `BOT_TOKEN` xatosi: `.env` qiymatini tekshiring.
 - Admin paneli ko‘rinmasa: `ADMIN_IDS` dagi sonni, vergul va bo‘sh joylarni tekshiring.
 - Telegram `file_id` ishlamasa: faylni shu botga qayta yuborib, dasturga yangi identifikator biriktiring.
 - Polling ishlamasa: ayni token bilan boshqa polling jarayoni ishlab turganini tekshiring.
-- SQLite xatosi bo‘lsa: `DB_PATH` katalogiga yozish huquqini tekshiring va diskda joy borligiga ishonch hosil qiling.
+- PostgreSQL xatosi bo‘lsa: `DATABASE_URL` qiymati, Neon tarmoq ruxsati va SSL parametrlarini tekshiring.
 
 ## Sinovlar
-- PostgreSQL xatosi bo‘lsa: `DATABASE_URL` qiymati, Neon tarmoq ruxsati va SSL parametrlarini tekshiring.
+
 ```powershell
 python -m pytest
 ```

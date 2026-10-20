@@ -3,6 +3,11 @@ import pytest
 from database.repositories import (
     categories, create_program, get_program, record_download, search_programs,
 )
+from admin.programs import _parse_category_ids
+
+
+def test_category_input_accepts_multiple_comma_separated_ids():
+    assert _parse_category_ids("1,6", {1, 6}) == [1, 6]
 
 
 @pytest.mark.asyncio
