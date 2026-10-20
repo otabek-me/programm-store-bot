@@ -1,6 +1,28 @@
+# fly.toml app configuration file generated for unknown on 2026-10-20T18:16:46Z
+#
+# See https://docs.fly.io/reference/configuration for information about how to use this file.
+#
+
 [build]
   dockerfile = "Dockerfile"
 
 [processes]
   app = "python bot.py"
-  
+
+[deploy]
+  release_command = 'python bot.py'
+  strategy = 'rolling'
+
+[http_service]
+  auto_start_machines = true
+  auto_stop_machines = true
+  force_https = true
+  internal_port = 8000
+  min_machines_running = 0
+  processes = ['app']
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 1
+  memory = '1gb'
+  memory_mb = 1024
