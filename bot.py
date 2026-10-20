@@ -40,7 +40,7 @@ async def on_error(event: ErrorEvent) -> bool:
 async def main() -> None:
     config = load_config()
     configure_logging(config.log_level)
-    await init_db(config.db_path)
+    await init_db(config.database_url)
 
     bot = Bot(token=config.bot_token)
     common_commands = [
@@ -55,11 +55,11 @@ async def main() -> None:
             scope=BotCommandScopeChat(chat_id=admin_id),
         )
     dispatcher = Dispatcher(storage=MemoryStorage())
-    dispatcher["db_path"] = str(config.db_path)
+    dispatcher["db_path"] = config.database_url
     dispatcher["admin_ids"] = config.admin_ids
     dispatcher["allowed_file_extensions"] = config.allowed_file_extensions
 
-    tracking = UserTrackingMiddleware(str(config.db_path))
+    tracking = UserTrackingMiddleware(config.database_url)
     throttling = ThrottlingMiddleware()
     dispatcher.message.outer_middleware(tracking)
     dispatcher.callback_query.outer_middleware(tracking)
@@ -87,4 +87,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(), loop_factory=asyncio.SelectorEventLoop)

@@ -3,8 +3,7 @@ import logging
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from aiosqlite import Error as SQLiteError, IntegrityError
-
+from database.db import DatabaseErrors, DatabaseIntegrityErrors
 from database.repositories import add_category, categories, delete_category, rename_category
 from keyboards.admin import category_admin_keyboard
 from states.admin import CategoryForm
@@ -62,10 +61,10 @@ async def save_category_name(message: Message, state: FSMContext, db_path: str) 
         else:
             changed = await rename_category(db_path, data["category_id"], name)
             result = "Kategoriya nomi yangilandi." if changed else "Kategoriya topilmadi."
-    except IntegrityError:
+    except DatabaseIntegrityErrors:
         await message.answer("Bunday nomdagi kategoriya mavjud.")
         return
-    except SQLiteError:
+    except DatabaseErrors:
         logger.exception("Kategoriya saqlashda xato: admin_id=%s", message.from_user.id)
         await message.answer("Kategoriyani saqlab bo‘lmadi. Qayta urinib ko‘ring.")
         return

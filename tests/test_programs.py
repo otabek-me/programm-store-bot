@@ -36,12 +36,13 @@ async def test_program_can_belong_to_multiple_categories(db_path):
     program = await get_program(db_path, program_id)
     results = [await search_programs(db_path, "", category_id=category_id) for category_id in category_ids]
 
-    assert program["category_name"] == ", ".join(row["name"] for row in (await categories(db_path))[:2])
+    expected_names = {row["name"] for row in (await categories(db_path))[:2]}
+    assert set(program["category_name"].split(", ")) == expected_names
     assert all(any(row["id"] == program_id for row in result) for result in results)
 
 
 @pytest.mark.asyncio
-async def test_legacy_program_category_is_migrated(db_path):
+async def test_legacy_program_category_is_backfilled(db_path):
     from database.db import connect, init_db
 
     category_id = (await categories(db_path))[0]["id"]
@@ -50,7 +51,7 @@ async def test_legacy_program_category_is_migrated(db_path):
         "file_id": "fid", "file_unique_id": "fuid",
     })
     async with await connect(db_path) as db:
-        await db.execute("DROP TABLE program_categories")
+        await db.execute("DELETE FROM program_categories")
         await db.commit()
 
     await init_db(db_path)

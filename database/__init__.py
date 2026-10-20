@@ -1,1 +1,1 @@
-"""SQLite database access for the Telegram software library."""
+"""PostgreSQL database access with SQLite support for tests and imports."""

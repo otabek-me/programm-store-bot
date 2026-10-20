@@ -1,17 +1,51 @@
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
+import psycopg
+from psycopg.rows import dict_row
+
+from database.postgres_schema import POSTGRES_SCHEMA
+
+
+DatabaseErrors = (aiosqlite.Error, psycopg.Error)
+DatabaseIntegrityErrors = (aiosqlite.IntegrityError, psycopg.IntegrityError)
 
 
 class _ConnectionContext:
-    def __init__(self, connection: aiosqlite.Connection) -> None:
+    def __init__(self, connection: Any, is_postgres: bool) -> None:
         self.connection = connection
+        self.is_postgres = is_postgres
 
-    async def __aenter__(self) -> aiosqlite.Connection:
-        return self.connection
+    async def __aenter__(self) -> "_ConnectionContext":
+        return self
 
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:
         await self.connection.close()
+
+    def _adapt_query(self, query: str) -> str:
+        if not self.is_postgres:
+            return query
+        return (
+            query.replace("?", "%s")
+            .replace("strftime('%Y-%m-%dT%H:%M:%fZ','now')", "CURRENT_TIMESTAMP")
+            .replace("group_concat(c.name, ', ')", "string_agg(c.name, ', ')")
+            .replace("date(first_seen_at)=date('now')", "first_seen_at::date=CURRENT_DATE")
+            .replace("date(downloaded_at)=date('now')", "downloaded_at::date=CURRENT_DATE")
+        )
+
+    async def execute(self, query: str, params: tuple[Any, ...] = ()):
+        return await self.connection.execute(self._adapt_query(query), params)
+
+    async def executemany(self, query: str, params) -> None:
+        if self.is_postgres:
+            async with self.connection.cursor() as cursor:
+                await cursor.executemany(self._adapt_query(query), params)
+        else:
+            await self.connection.executemany(self._adapt_query(query), params)
+
+    async def commit(self) -> None:
+        await self.connection.commit()
 
 
 DEFAULT_CATEGORIES = (
@@ -118,25 +152,45 @@ CREATE INDEX IF NOT EXISTS idx_requests_user ON software_requests(user_id);
 """
 
 
-async def connect(db_path: str | Path) -> _ConnectionContext:
-    path = Path(db_path)
+async def connect(database: str | Path) -> _ConnectionContext:
+    database_value = str(database)
+    if database_value.startswith(("postgresql://", "postgres://")):
+        connection = await psycopg.AsyncConnection.connect(
+            database_value, row_factory=dict_row, connect_timeout=10, prepare_threshold=None
+        )
+        await connection.execute("CREATE SCHEMA IF NOT EXISTS programm_store_bot")
+        await connection.execute("SET LOCAL search_path TO programm_store_bot")
+        return _ConnectionContext(connection, is_postgres=True)
+
+    path = Path(database)
     path.parent.mkdir(parents=True, exist_ok=True)
-    db = await aiosqlite.connect(path)
-    db.row_factory = aiosqlite.Row
-    await db.execute("PRAGMA foreign_keys = ON")
-    await db.execute("PRAGMA journal_mode = WAL")
-    return _ConnectionContext(db)
+    connection = await aiosqlite.connect(path)
+    connection.row_factory = aiosqlite.Row
+    await connection.execute("PRAGMA foreign_keys = ON")
+    await connection.execute("PRAGMA journal_mode = WAL")
+    return _ConnectionContext(connection, is_postgres=False)
 
 
-async def init_db(db_path: str | Path) -> None:
-    async with await connect(db_path) as db:
-        await db.executescript(SCHEMA)
-        await db.executemany(
-            "INSERT OR IGNORE INTO categories(name) VALUES (?)",
-            ((name,) for name in DEFAULT_CATEGORIES),
-        )
-        await db.execute(
-            """INSERT OR IGNORE INTO program_categories(program_id, category_id)
-            SELECT id, category_id FROM programs WHERE category_id IS NOT NULL"""
-        )
+async def init_db(database: str | Path, *, seed_categories: bool = True) -> None:
+    async with await connect(database) as db:
+        schema = POSTGRES_SCHEMA if db.is_postgres else SCHEMA
+        for statement in schema.split(";"):
+            if statement.strip():
+                await db.execute(statement)
+        if seed_categories:
+            await db.executemany(
+                "INSERT INTO categories(name) VALUES (?) ON CONFLICT DO NOTHING",
+                ((name,) for name in DEFAULT_CATEGORIES),
+            )
+        if db.is_postgres:
+            await db.execute(
+                """INSERT INTO program_categories(program_id, category_id)
+                SELECT id, category_id FROM programs WHERE category_id IS NOT NULL
+                ON CONFLICT DO NOTHING"""
+            )
+        else:
+            await db.execute(
+                """INSERT OR IGNORE INTO program_categories(program_id, category_id)
+                SELECT id, category_id FROM programs WHERE category_id IS NOT NULL"""
+            )
         await db.commit()

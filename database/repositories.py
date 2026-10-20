@@ -1,7 +1,5 @@
 from typing import Any
 
-import aiosqlite
-
 from database.db import connect
 
 
@@ -16,21 +14,24 @@ async def upsert_user(db_path: str, user_id: int, username: str | None, first_na
         await db.commit()
 
 
-async def fetch_all(db: aiosqlite.Connection, query: str, params: tuple[Any, ...] = ()) -> list[aiosqlite.Row]:
+async def fetch_all(db: Any, query: str, params: tuple[Any, ...] = ()) -> list[Any]:
     cursor = await db.execute(query, params)
     return await cursor.fetchall()
 
 
-async def categories(db_path: str) -> list[aiosqlite.Row]:
+async def categories(db_path: str) -> list[Any]:
     async with await connect(db_path) as db:
-        return await fetch_all(db, "SELECT id, name FROM categories ORDER BY name COLLATE NOCASE")
+        return await fetch_all(db, "SELECT id, name FROM categories ORDER BY lower(name)")
 
 
 async def add_category(db_path: str, name: str) -> int:
     async with await connect(db_path) as db:
-        cursor = await db.execute("INSERT INTO categories(name) VALUES (?)", (name.strip(),))
+        cursor = await db.execute(
+            "INSERT INTO categories(name) VALUES (?) RETURNING id", (name.strip(),)
+        )
+        category_id = (await cursor.fetchone())["id"]
         await db.commit()
-        return cursor.lastrowid
+        return category_id
 
 
 async def rename_category(db_path: str, category_id: int, name: str) -> bool:
@@ -59,7 +60,7 @@ async def create_program(db_path: str, data: dict[str, Any]) -> int:
             """INSERT INTO programs
             (name, description, category_id, file_id, file_unique_id, file_name, mime_type,
              file_size, version, operating_system, keywords, is_active, is_recommended)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?) RETURNING id""",
             (
                 data["name"], data["description"], category_ids[0] if category_ids else None,
                 data["file_id"], data["file_unique_id"], data.get("file_name"),
@@ -68,22 +69,23 @@ async def create_program(db_path: str, data: dict[str, Any]) -> int:
                 int(data.get("is_recommended", False)),
             ),
         )
+        program_id = (await cursor.fetchone())["id"]
         await db.executemany(
             "INSERT INTO program_categories(program_id, category_id) VALUES (?, ?)",
-            ((cursor.lastrowid, category_id) for category_id in category_ids),
+            ((program_id, category_id) for category_id in category_ids),
         )
         await db.commit()
-        return cursor.lastrowid
+        return program_id
 
 
 async def save_draft(db_path: str, admin_id: int, payload: str, draft_id: int | None = None) -> int:
     async with await connect(db_path) as db:
         if draft_id is None:
             cursor = await db.execute(
-                "INSERT INTO program_drafts(admin_id, payload) VALUES (?, ?)",
+                "INSERT INTO program_drafts(admin_id, payload) VALUES (?, ?) RETURNING id",
                 (admin_id, payload),
             )
-            draft_id = cursor.lastrowid
+            draft_id = (await cursor.fetchone())["id"]
         else:
             await db.execute(
                 """UPDATE program_drafts SET payload=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
@@ -94,7 +96,7 @@ async def save_draft(db_path: str, admin_id: int, payload: str, draft_id: int | 
         return draft_id
 
 
-async def get_draft(db_path: str, admin_id: int, draft_id: int) -> aiosqlite.Row | None:
+async def get_draft(db_path: str, admin_id: int, draft_id: int) -> Any | None:
     async with await connect(db_path) as db:
         cursor = await db.execute(
             "SELECT * FROM program_drafts WHERE id=? AND admin_id=?", (draft_id, admin_id)
@@ -108,7 +110,7 @@ async def remove_draft(db_path: str, admin_id: int, draft_id: int) -> None:
         await db.commit()
 
 
-async def list_drafts(db_path: str, admin_id: int) -> list[aiosqlite.Row]:
+async def list_drafts(db_path: str, admin_id: int) -> list[Any]:
     async with await connect(db_path) as db:
         return await fetch_all(
             db, "SELECT id, created_at FROM program_drafts WHERE admin_id=? ORDER BY updated_at DESC",
@@ -116,7 +118,7 @@ async def list_drafts(db_path: str, admin_id: int) -> list[aiosqlite.Row]:
         )
 
 
-async def get_program(db_path: str, program_id: int, active_only: bool = False) -> aiosqlite.Row | None:
+async def get_program(db_path: str, program_id: int, active_only: bool = False) -> Any | None:
     async with await connect(db_path) as db:
         query = """SELECT p.*,
         (SELECT group_concat(c.name, ', ') FROM program_categories pc
@@ -131,7 +133,7 @@ async def get_program(db_path: str, program_id: int, active_only: bool = False) 
 async def search_programs(
     db_path: str, query: str = "", *, sort: str = "relevance", category_id: int | None = None,
     limit: int = 8, offset: int = 0,
-) -> list[aiosqlite.Row]:
+) -> list[Any]:
     text = query.strip().casefold()
     sql = """SELECT p.id, p.name, p.description, p.version, p.operating_system,
     p.downloads, p.is_recommended, p.created_at,
@@ -149,18 +151,18 @@ async def search_programs(
         sql += " AND EXISTS (SELECT 1 FROM program_categories pc WHERE pc.program_id=p.id AND pc.category_id=?)"
         params.append(category_id)
     order_by = {
-        "popular": "p.downloads DESC, p.name COLLATE NOCASE",
+        "popular": "p.downloads DESC, lower(p.name)",
         "newest": "p.created_at DESC, p.id DESC",
         "relevance": """p.is_recommended DESC,
             CASE WHEN lower(p.name)=? THEN 0 WHEN lower(p.name) LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END,
-            p.downloads DESC, p.name COLLATE NOCASE""",
+            p.downloads DESC, lower(p.name)""",
     }
     if sort not in order_by:
         raise ValueError("Noma’lum saralash turi.")
     if sort == "relevance" and text:
         params.extend((text, f"{text.replace('%', r'\%').replace('_', r'\_')}%"))
     elif sort == "relevance":
-        sql += " ORDER BY p.is_recommended DESC, p.downloads DESC, p.name COLLATE NOCASE LIMIT ? OFFSET ?"
+        sql += " ORDER BY p.is_recommended DESC, p.downloads DESC, lower(p.name) LIMIT ? OFFSET ?"
         params.extend((limit, offset))
         async with await connect(db_path) as db:
             return await fetch_all(db, sql, tuple(params))
@@ -181,10 +183,10 @@ async def record_download(db_path: str, user_id: int, program_id: int) -> None:
 async def create_request(db_path: str, user_id: int, name: str, details: str) -> int:
     async with await connect(db_path) as db:
         cursor = await db.execute(
-            "INSERT INTO software_requests(user_id, program_name, details) VALUES (?, ?, ?)",
+            "INSERT INTO software_requests(user_id, program_name, details) VALUES (?, ?, ?) RETURNING id",
             (user_id, name.strip(), details.strip()),
         )
-        request_id = cursor.lastrowid
+        request_id = (await cursor.fetchone())["id"]
         await db.execute(
             "INSERT INTO request_messages(request_id, sender_id, message) VALUES (?, ?, ?)",
             (request_id, user_id, details.strip() or name.strip()),
@@ -221,7 +223,7 @@ async def add_request_message(db_path: str, request_id: int, sender_id: int, mes
         await db.commit()
 
 
-async def requests(db_path: str, *, status: str | None = None, limit: int = 10, offset: int = 0) -> list[aiosqlite.Row]:
+async def requests(db_path: str, *, status: str | None = None, limit: int = 10, offset: int = 0) -> list[Any]:
     async with await connect(db_path) as db:
         if status:
             return await fetch_all(
@@ -236,7 +238,7 @@ async def requests(db_path: str, *, status: str | None = None, limit: int = 10, 
         )
 
 
-async def get_request(db_path: str, request_id: int) -> aiosqlite.Row | None:
+async def get_request(db_path: str, request_id: int) -> Any | None:
     async with await connect(db_path) as db:
         cursor = await db.execute(
             """SELECT r.*, u.username, u.first_name FROM software_requests r
@@ -337,7 +339,7 @@ async def delete_program(db_path: str, program_id: int) -> bool:
         return cursor.rowcount > 0
 
 
-async def list_users(db_path: str, limit: int = 10, offset: int = 0) -> list[aiosqlite.Row]:
+async def list_users(db_path: str, limit: int = 10, offset: int = 0) -> list[Any]:
     async with await connect(db_path) as db:
         return await fetch_all(
             db, "SELECT user_id, username, first_name, last_active_at, download_count, is_blocked FROM users ORDER BY last_active_at DESC LIMIT ? OFFSET ?",
@@ -345,7 +347,7 @@ async def list_users(db_path: str, limit: int = 10, offset: int = 0) -> list[aio
         )
 
 
-async def list_programs_admin(db_path: str, limit: int = 8, offset: int = 0) -> list[aiosqlite.Row]:
+async def list_programs_admin(db_path: str, limit: int = 8, offset: int = 0) -> list[Any]:
     async with await connect(db_path) as db:
         return await fetch_all(
             db, """SELECT p.id, p.name, p.is_active, p.downloads,

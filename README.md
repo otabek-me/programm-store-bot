@@ -25,7 +25,7 @@ py -3.12 -m venv .venv
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 Copy-Item .env.example .env
-```
+- PostgreSQL schema bootstrap va boshlang‘ich kategoriyalar.
 
 ### Linux
 
@@ -58,7 +58,7 @@ python bot.py
 ```
 
 ```bash
-python bot.py
+DATABASE_URL=postgresql://user:password@host:5432/database?sslmode=require
 ```
 
 Birinchi ishga tushishda `DB_PATH` papkasi va SQLite jadvallari yaratiladi. Bot polling rejimida ishlaydi; ishlab chiqarish serverida jarayonni `systemd` yoki OS xizmat boshqaruvchisi orqali nazorat qiling.
@@ -76,25 +76,35 @@ Loglar konsolga yoziladi. `LOG_LEVEL` qiymati `DEBUG`, `INFO`, `WARNING`, `ERROR
 Telegram `file_id` ayni bot tomonidan qayta foydalaniladigan identifikator; u faylning o‘zi yoki arxiv nusxasi emas. Faylni keyin yuborish Telegram Bot API va asl fayl mavjudligiga bog‘liq. Bot faqat `file_id` orqali qayta yuboradi; `file_unique_id` qayta yuborish uchun ishlatilmaydi. Telegram limitlari Bot API va account turiga qarab o‘zgarishi mumkin; bot o‘zboshimchalik bilan fayl hajmi chegarasi belgilamaydi.
 
 ## Zaxira nusxasi va muammolar
+Birinchi ishga tushishda `DATABASE_URL` dagi PostgreSQL bazasida jadvallar yaratiladi. Bot polling rejimida ishlaydi; ishlab chiqarish serverida jarayonni `systemd` yoki OS xizmat boshqaruvchisi orqali nazorat qiling.
 
+### Eski SQLite bazasini ko‘chirish
+
+Neon PostgreSQL ulanish URL’ini `.env` dagi `DATABASE_URL` ga yozing. Keyin eski SQLite faylini bir marta import qiling:
+
+```powershell
+python migrate_sqlite_to_postgres.py D:\Downloads\bot.sqlite3
+```
+
+Import foydalanuvchilar, kategoriyalar, dasturlar, yuklab olish tarixi, so‘rovlar, xabarlar, sozlamalar, draftlar va ommaviy xabar loglarini mavjud ID’lari bilan ko‘chiradi. Eski `category_id` bog‘lanishlari ham ko‘p-kategoriyali jadvalga o‘tkaziladi. Skript eski faylni o‘zgartirmaydi va qayta bajarilsa mavjud satrlarni takrorlamaydi.
 Botni to‘xtatib, `data/bot.sqlite3` faylini nusxalang; WAL rejimi ishlatilgani sababli nusxa olishdan avval to‘xtatish eng sodda xavfsiz usul:
 
 ```powershell
-Copy-Item .\data\bot.sqlite3 .\data\bot.backup.sqlite3
+PostgreSQL bazasining zaxira nusxasini Neon boshqaruv paneli yoki `pg_dump` orqali oling. SQLite import manbasi `D:\Downloads\bot.sqlite3` o‘zgartirilmaydi.
 ```
 
-```bash
+pg_dump "$env:DATABASE_URL" -Fc -f .\data\bot.backup.dump
 cp data/bot.sqlite3 data/bot.backup.sqlite3
 ```
 
-- `BOT_TOKEN` xatosi: `.env` qiymatini tekshiring.
+pg_dump "$DATABASE_URL" -Fc -f data/bot.backup.dump
 - Admin paneli ko‘rinmasa: `ADMIN_IDS` dagi sonni, vergul va bo‘sh joylarni tekshiring.
 - Telegram `file_id` ishlamasa: faylni shu botga qayta yuborib, dasturga yangi identifikator biriktiring.
 - Polling ishlamasa: ayni token bilan boshqa polling jarayoni ishlab turganini tekshiring.
 - SQLite xatosi bo‘lsa: `DB_PATH` katalogiga yozish huquqini tekshiring va diskda joy borligiga ishonch hosil qiling.
 
 ## Sinovlar
-
+- PostgreSQL xatosi bo‘lsa: `DATABASE_URL` qiymati, Neon tarmoq ruxsati va SSL parametrlarini tekshiring.
 ```powershell
 python -m pytest
 ```

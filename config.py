@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 import os
-from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -9,7 +8,7 @@ from dotenv import load_dotenv
 class Config:
     bot_token: str
     admin_ids: frozenset[int]
-    db_path: Path
+    database_url: str
     log_level: str
     allowed_file_extensions: frozenset[str] | None
 
@@ -30,7 +29,9 @@ def load_config() -> Config:
     if not admin_ids:
         raise ValueError("ADMIN_IDS ichida kamida bitta administrator ID bo‘lishi kerak.")
 
-    db_path = Path(os.getenv("DB_PATH", "data/bot.sqlite3"))
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if not database_url.startswith(("postgresql://", "postgres://")):
+        raise ValueError("DATABASE_URL PostgreSQL ulanish manzili .env faylida sozlanmagan.")
     raw_extensions = os.getenv("ALLOWED_FILE_EXTENSIONS", "").strip()
     extensions = (
         frozenset(
@@ -42,7 +43,7 @@ def load_config() -> Config:
     return Config(
         bot_token=token,
         admin_ids=admin_ids,
-        db_path=db_path,
+        database_url=database_url,
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         allowed_file_extensions=extensions,
     )

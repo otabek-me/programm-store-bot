@@ -4,8 +4,7 @@ import logging
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from aiosqlite import Error as SQLiteError
-
+from database.db import DatabaseErrors
 from database.repositories import (
     delete_program, get_draft, get_program, list_drafts, list_programs_admin, remove_draft, save_draft,
     replace_program_categories, replace_program_file, search_programs, toggle_program_active,
@@ -193,7 +192,7 @@ async def publish_draft(callback: CallbackQuery, state: FSMContext, db_path: str
     data = await state.get_data()
     try:
         program_id = await publish_program(db_path, data["draft_payload"])
-    except (ValueError, KeyError, SQLiteError):
+    except (ValueError, KeyError, *DatabaseErrors):
         logger.exception("Dastur e’lon qilishda xato: admin_id=%s", callback.from_user.id)
         if callback.message:
             await callback.message.answer("Dastur saqlanmadi. Ma’lumotlarni tekshirib, qayta urinib ko‘ring.")
