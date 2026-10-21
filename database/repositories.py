@@ -79,6 +79,12 @@ async def categories(db_path: str) -> list[Any]:
         return [dict(row) for row in cached_rows]
 
 
+async def admin_categories(db_path: str) -> list[Any]:
+    async with await connect(db_path) as db:
+        rows = await fetch_all(db, "SELECT id, name FROM categories ORDER BY id ASC")
+        return [dict(row) for row in rows]
+
+
 async def invalidate_categories_cache(db_path: str) -> None:
     async with _category_cache_lock():
         _CATEGORY_CACHE.pop(str(db_path), None)
@@ -418,6 +424,20 @@ async def list_users(db_path: str, limit: int = 10, offset: int = 0) -> list[Any
             db, "SELECT user_id, username, first_name, last_active_at, download_count, is_blocked FROM users ORDER BY last_active_at DESC LIMIT ? OFFSET ?",
             (limit, offset),
         )
+
+
+async def admin_user_stats(db_path: str) -> dict[str, int]:
+    async with await connect(db_path) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) AS total, SUM(CASE WHEN is_blocked = 0 THEN 1 ELSE 0 END) AS active, SUM(CASE WHEN is_blocked = 1 THEN 1 ELSE 0 END) AS blocked, COALESCE(SUM(download_count), 0) AS total_downloads FROM users"
+        )
+        row = await cursor.fetchone()
+        return {
+            "total": int(row["total"] or 0),
+            "active": int(row["active"] or 0),
+            "blocked": int(row["blocked"] or 0),
+            "total_downloads": int(row["total_downloads"] or 0),
+        }
 
 
 async def list_programs_admin(db_path: str, limit: int = 8, offset: int = 0) -> list[Any]:

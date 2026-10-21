@@ -50,6 +50,17 @@ def request_admin_keyboard(request_id: int, status: str) -> InlineKeyboardMarkup
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def user_pagination_keyboard(prefix: str, page: int, has_next: bool) -> InlineKeyboardMarkup:
+    buttons: list[InlineKeyboardButton] = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"{prefix}:{page - 1}"))
+    if has_next:
+        buttons.append(InlineKeyboardButton(text="Keyingi ➡️", callback_data=f"{prefix}:{page + 1}"))
+    rows = [buttons] if buttons else []
+    rows.append([InlineKeyboardButton(text="🏠 Admin panel", callback_data="admin:home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def edit_program_keyboard(program_id: int) -> InlineKeyboardMarkup:
     fields = [
         ("Nomi", "name"),

@@ -14,6 +14,19 @@ def test_category_input_accepts_multiple_comma_separated_ids():
     assert _parse_category_ids("1,6", {1, 6}) == [1, 6]
 
 
+def test_category_input_accepts_ids_with_spaces():
+    assert _parse_category_ids("1, 6", {1, 6}) == [1, 6]
+
+
+def test_category_input_accepts_mixed_spaces():
+    assert _parse_category_ids(" 1 , 6 ", {1, 6}) == [1, 6]
+
+
+def test_category_input_rejects_invalid_ids():
+    with pytest.raises(ValueError):
+        _parse_category_ids("1,abc", {1, 6})
+
+
 def test_sqlite_importer_restores_legacy_category_relation(tmp_path):
     source_path = tmp_path / "legacy.sqlite3"
     with sqlite3.connect(source_path) as source:

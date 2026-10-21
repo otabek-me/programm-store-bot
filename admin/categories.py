@@ -1,10 +1,11 @@
+import html
 import logging
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from database.db import DatabaseErrors, DatabaseIntegrityErrors
-from database.repositories import add_category, categories, delete_category, rename_category
+from database.repositories import add_category, admin_categories, delete_category, rename_category
 from keyboards.admin import category_admin_keyboard
 from states.admin import CategoryForm
 from utils.validators import required_text
@@ -12,14 +13,59 @@ from utils.validators import required_text
 logger = logging.getLogger(__name__)
 router = Router(name="admin-categories")
 
+CATEGORY_EMOJIS = {
+    1: "🖥",
+    2: "📱",
+    3: "💻",
+    4: "🎨",
+    5: "🎬",
+    6: "📄",
+    7: "🌐",
+    8: "🛡",
+    9: "⚙️",
+    10: "📦",
+}
+
+
+def _escape(text: str) -> str:
+    return html.escape(text or "", quote=False)
+
+
+def _category_emoji(category_id: int) -> str:
+    return CATEGORY_EMOJIS.get(category_id, "📁")
+
+
+def _format_categories_listing(rows: list[dict]) -> str:
+    lines = [
+        "<b>📂 KATEGORIYALAR</b>",
+        "",
+        "Quyidagi ro‘yxatdan kerakli kategoriyalarni tanlang:",
+        "",
+    ]
+    for row in rows:
+        lines.append(f"`{row['id']}` — {_category_emoji(row['id'])} {_escape(row['name'])}")
+    lines.extend(
+        [
+            "",
+            "✍️ <b>Kiritish formati:</b> kategoriya ID raqamlarini vergul bilan yuboring.",
+            "",
+            "<b>Misol:</b> `1, 3, 9`",
+            "",
+            "ℹ️ Bir nechta kategoriya tanlash mumkin. ID raqamlarini vergul bilan ajrating.",
+        ]
+    )
+    return "\n".join(lines)
+
 
 @router.callback_query(F.data == "admin:categories")
 async def show_categories(callback: CallbackQuery, db_path: str) -> None:
     await callback.answer()
-    rows = await categories(db_path)
+    rows = await admin_categories(db_path)
     if callback.message:
-        listing = "\n".join(f"{row['id']}: {row['name']}" for row in rows)
-        await callback.message.answer(f"Kategoriyalar:\n{listing}", reply_markup=category_admin_keyboard(rows))
+        text = _format_categories_listing(rows)
+        await callback.message.edit_text(
+            text, reply_markup=category_admin_keyboard(rows), parse_mode="HTML"
+        )
 
 
 @router.callback_query(F.data == "category_add")
@@ -69,7 +115,7 @@ async def save_category_name(message: Message, state: FSMContext, db_path: str) 
         await message.answer("Kategoriyani saqlab bo‘lmadi. Qayta urinib ko‘ring.")
         return
     await state.clear()
-    await message.answer(result, reply_markup=category_admin_keyboard(await categories(db_path)))
+    await message.answer(result, reply_markup=category_admin_keyboard(await admin_categories(db_path)))
 
 
 @router.callback_query(F.data.startswith("category_delete_confirm:"))
@@ -99,7 +145,7 @@ async def category_delete_confirmed(callback: CallbackQuery, db_path: str) -> No
         return
     deleted = await delete_category(db_path, category_id)
     if callback.message:
-        rows = await categories(db_path)
+        rows = await admin_categories(db_path)
         await callback.message.answer(
             "Kategoriya o‘chirildi." if deleted else "Kategoriya topilmadi.",
             reply_markup=category_admin_keyboard(rows),
