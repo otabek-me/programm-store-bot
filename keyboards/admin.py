@@ -1,20 +1,25 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
+def _chunk(rows: list, size: int) -> list[list]:
+    return [rows[i:i + size] for i in range(0, len(rows), size)]
+
+
 def admin_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Dastur qo‘shish", callback_data="admin:add")],
-        [InlineKeyboardButton(text="📝 Draftni davom ettirish", callback_data="admin:drafts")],
-        [InlineKeyboardButton(text="📚 Dasturlarni boshqarish", callback_data="admin:programs")],
-        [InlineKeyboardButton(text="🔍 Dastur qidirish", callback_data="admin:search")],
-        [InlineKeyboardButton(text="📂 Kategoriyalar", callback_data="admin:categories")],
-        [InlineKeyboardButton(text="💬 Foydalanuvchi so‘rovlari", callback_data="admin:requests")],
-        [InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="admin:users")],
-        [InlineKeyboardButton(text="📊 Statistika", callback_data="admin:stats")],
-        [InlineKeyboardButton(text="📢 Xabar yuborish", callback_data="admin:broadcast")],
-        [InlineKeyboardButton(text="⚙️ Bot sozlamalari", callback_data="admin:settings")],
-        [InlineKeyboardButton(text="❌ Paneldan chiqish", callback_data="home")],
-    ])
+    buttons = [
+        InlineKeyboardButton(text="➕ Dastur qo‘shish", callback_data="admin:add"),
+        InlineKeyboardButton(text="📝 Draftni davom ettirish", callback_data="admin:drafts"),
+        InlineKeyboardButton(text="📚 Dasturlarni boshqarish", callback_data="admin:programs"),
+        InlineKeyboardButton(text="🔍 Dastur qidirish", callback_data="admin:search"),
+        InlineKeyboardButton(text="📂 Kategoriyalar", callback_data="admin:categories"),
+        InlineKeyboardButton(text="💬 Foydalanuvchi so‘rovlari", callback_data="admin:requests"),
+        InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="admin:users"),
+        InlineKeyboardButton(text="📊 Statistika", callback_data="admin:stats"),
+        InlineKeyboardButton(text="📢 Xabar yuborish", callback_data="admin:broadcast"),
+        InlineKeyboardButton(text="⚙️ Bot sozlamalari", callback_data="admin:settings"),
+        InlineKeyboardButton(text="❌ Paneldan chiqish", callback_data="home"),
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=_chunk(buttons, 2))
 
 
 def category_admin_keyboard(rows) -> InlineKeyboardMarkup:
@@ -56,8 +61,9 @@ def edit_program_keyboard(program_id: int) -> InlineKeyboardMarkup:
         ("Telegram faylini almashtirish", "file"),
     ]
     buttons = [
-        [InlineKeyboardButton(text=label, callback_data=f"admin:edit:{program_id}:{field}")]
+        InlineKeyboardButton(text=label, callback_data=f"admin:edit:{program_id}:{field}")
         for label, field in fields
     ]
-    buttons.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"admin:program:{program_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    keyboard = _chunk(buttons, 2)
+    keyboard.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"admin:program:{program_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)

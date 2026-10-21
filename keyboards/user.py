@@ -13,13 +13,18 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
+def _chunk(rows: list, size: int) -> list[list]:
+    return [rows[i:i + size] for i in range(0, len(rows), size)]
+
+
 def categories_keyboard(rows) -> InlineKeyboardMarkup:
     buttons = [
-        [InlineKeyboardButton(text=row["name"], callback_data=f"category:{row['id']}")]
+        InlineKeyboardButton(text=row["name"], callback_data=f"category:{row['id']}")
         for row in rows
     ]
-    buttons.append([InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="home")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    keyboard = _chunk(buttons, 2)
+    keyboard.append([InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="home")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
 def programs_keyboard(rows, *, page: int = 0, mode: str = "catalog", sort: str = "relevance") -> InlineKeyboardMarkup:
