@@ -402,7 +402,7 @@ async def edit_program_field(callback: CallbackQuery, state: FSMContext, db_path
         prompt = "Yangi Telegram hujjatini yuboring (fayl serverga yuklab olinmaydi):"
     else:
         await state.set_state(EditProgram.value)
-        if field == "category_ids":
+        if field in {"category_id", "category_ids"}:
             from database.repositories import categories
             rows = await categories(db_path)
             prompt = "Yangi kategoriya ID raqamlarini vergul bilan yuboring (-: kategoriyasiz):\n" + "\n".join(
@@ -422,7 +422,7 @@ async def save_program_field(message: Message, state: FSMContext, db_path: str) 
     field = data["edit_field"]
     value = (message.text or "").strip()
     try:
-        if field == "category_ids":
+        if field in {"category_id", "category_ids"}:
             from database.repositories import categories
             available_ids = {row["id"] for row in await categories(db_path)}
             category_ids = _parse_category_ids(value, available_ids)
@@ -432,10 +432,14 @@ async def save_program_field(message: Message, state: FSMContext, db_path: str) 
         else:
             maximum = 1500 if field == "description" else 120
             value = required_text(value, "Qiymat", maximum)
-        if field != "category_ids":
+        if field not in {"category_id", "category_ids"}:
             changed = await update_program_field(db_path, data["edit_program_id"], field, value)
     except (ValueError, KeyError) as exc:
         await message.answer(str(exc) or "Qiymatni tekshiring.")
+        return
+    except DatabaseErrors:
+        logger.exception("Dastur maydonini saqlashda xato: admin_id=%s", message.from_user.id)
+        await message.answer("Dastur ma’lumotini saqlab bo‘lmadi. Qayta urinib ko‘ring.")
         return
     await state.clear()
     await message.answer("Dastur yangilandi." if changed else "Dastur topilmadi.", reply_markup=admin_menu())

@@ -63,6 +63,16 @@ python bot.py
 
 Birinchi ishga tushishda `DATABASE_URL` dagi PostgreSQL bazasida jadvallar yaratiladi. Bot polling rejimida ishlaydi; ishlab chiqarish serverida jarayonni `systemd` yoki OS xizmat boshqaruvchisi orqali nazorat qiling.
 
+### Eski SQLite bazasini import qilish
+
+`.env` ichidagi `DATABASE_URL` ni sozlab, importni bir marta ishga tushiring:
+
+```powershell
+python migrate_sqlite_to_postgres.py D:\Downloads\bot.sqlite3
+```
+
+Manba SQLite fayli read-only ochiladi. Yozuv ID’lari va eski `category_id` bog‘lanishlari saqlanadi; takroriy import mavjud PostgreSQL yozuvlarini ustidan yozmaydi.
+
 Loglar konsolga yoziladi. `LOG_LEVEL` qiymati `DEBUG`, `INFO`, `WARNING`, `ERROR` yoki `CRITICAL` bo‘lishi mumkin.
 
 ## Foydalanish
@@ -90,8 +100,10 @@ pg_dump "$DATABASE_URL" -Fc -f data/bot.backup.dump
 - `BOT_TOKEN` xatosi: `.env` qiymatini tekshiring.
 - Admin paneli ko‘rinmasa: `ADMIN_IDS` dagi sonni, vergul va bo‘sh joylarni tekshiring.
 - Telegram `file_id` ishlamasa: faylni shu botga qayta yuborib, dasturga yangi identifikator biriktiring.
-- Polling ishlamasa: ayni token bilan boshqa polling jarayoni ishlab turganini tekshiring.
+- Fly.io’da polling uchun bitta machine ishlating: `fly scale count 1 -a programm-store-bot`. Lokal yoki boshqa Fly deployment’dagi `python bot.py` jarayonini ham to‘xtating.
 - PostgreSQL xatosi bo‘lsa: `DATABASE_URL` qiymati, Neon tarmoq ruxsati va SSL parametrlarini tekshiring.
+
+`LOG_LEVEL=DEBUG` bo‘lganda pool checkout va katalog/kategoriya query vaqti, query soni hamda cache hit secret va qidiruv matnisiz ko‘rsatiladi. 500 ms dan sekin DB read’lar warning sifatida yoziladi.
 
 ## Sinovlar
 

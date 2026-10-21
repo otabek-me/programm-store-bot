@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramAPIError
@@ -10,7 +11,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from admin import broadcasts, categories, dashboard, programs, requests, settings, users
 from config import load_config
-from database.db import init_db
+from database.db import close_postgres_pools, init_db
 from handlers import catalog, downloads, fallback, requests as user_requests, search, start
 from middlewares.throttling import ThrottlingMiddleware
 from middlewares.user_tracking import UserTrackingMiddleware
@@ -79,11 +80,16 @@ async def main() -> None:
         dispatcher.include_router(router)
     dispatcher.include_router(fallback.router)
 
-    logger.info("Bot ishga tushmoqda. Adminlar soni: %d", len(config.admin_ids))
+    logger.info(
+        "Bot ishga tushmoqda. Adminlar soni: %d, Fly machine: %s",
+        len(config.admin_ids),
+        os.getenv("FLY_MACHINE_ID", "local"),
+    )
     try:
         await dispatcher.start_polling(bot)
     finally:
         await bot.session.close()
+        await close_postgres_pools()
 
 
 if __name__ == "__main__":

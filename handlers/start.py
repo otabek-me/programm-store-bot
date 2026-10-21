@@ -38,18 +38,8 @@ async def home_callback(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(F.text == "❌ Bekor qilish")
-async def cancel(
-    message: Message, state: FSMContext, db_path: str, admin_ids: frozenset[int]
-) -> None:
-    data = await state.get_data()
-    if is_admin(message.from_user.id, admin_ids) and data.get("draft_id"):
-        await remove_draft(db_path, message.from_user.id, data["draft_id"])
-    await state.clear()
-    await message.answer("Jarayon bekor qilindi.", reply_markup=main_menu())
-
-
 @router.message(Command("cancel"))
-async def cancel_command(
+async def cancel(
     message: Message, state: FSMContext, db_path: str, admin_ids: frozenset[int]
 ) -> None:
     data = await state.get_data()

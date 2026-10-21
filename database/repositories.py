@@ -1,6 +1,39 @@
+import asyncio
+import logging
+from time import monotonic, perf_counter
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from database.db import connect
+
+logger = logging.getLogger(__name__)
+CATEGORY_CACHE_TTL = 30.0
+_CATEGORY_CACHE: dict[str, tuple[float, tuple[dict[str, Any], ...]]] = {}
+_CATEGORY_CACHE_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = WeakKeyDictionary()
+
+
+def _category_cache_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _CATEGORY_CACHE_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _CATEGORY_CACHE_LOCKS[loop] = lock
+    return lock
+
+
+def _log_read(operation: str, started_at: float, row_count: int, *, cache_hit: bool = False) -> None:
+    duration_ms = round((perf_counter() - started_at) * 1000, 2)
+    details = {
+        "operation": operation,
+        "duration_ms": duration_ms,
+        "query_count": 0 if cache_hit else 1,
+        "rows": row_count,
+        "cache_hit": cache_hit,
+    }
+    if duration_ms >= 500:
+        logger.warning("Slow database read", extra=details)
+    else:
+        logger.debug("Database read", extra=details)
 
 
 async def upsert_user(db_path: str, user_id: int, username: str | None, first_name: str) -> None:
@@ -20,8 +53,35 @@ async def fetch_all(db: Any, query: str, params: tuple[Any, ...] = ()) -> list[A
 
 
 async def categories(db_path: str) -> list[Any]:
-    async with await connect(db_path) as db:
-        return await fetch_all(db, "SELECT id, name FROM categories ORDER BY lower(name)")
+    started_at = perf_counter()
+    cache_key = str(db_path)
+    now = monotonic()
+    cached = _CATEGORY_CACHE.get(cache_key)
+    if cached is not None and cached[0] > now:
+        _log_read("categories", started_at, len(cached[1]), cache_hit=True)
+        return [dict(row) for row in cached[1]]
+
+    async with _category_cache_lock():
+        now = monotonic()
+        cached = _CATEGORY_CACHE.get(cache_key)
+        if cached is not None and cached[0] > now:
+            _log_read("categories", started_at, len(cached[1]), cache_hit=True)
+            return [dict(row) for row in cached[1]]
+        async with await connect(db_path) as db:
+            rows = await fetch_all(db, "SELECT id, name FROM categories ORDER BY lower(name)")
+        cached_rows = tuple(dict(row) for row in rows)
+        _CATEGORY_CACHE[cache_key] = (monotonic() + CATEGORY_CACHE_TTL, cached_rows)
+        if len(_CATEGORY_CACHE) > 128:
+            for key, (expires_at, _) in tuple(_CATEGORY_CACHE.items()):
+                if expires_at <= now:
+                    _CATEGORY_CACHE.pop(key, None)
+        _log_read("categories", started_at, len(cached_rows))
+        return [dict(row) for row in cached_rows]
+
+
+async def invalidate_categories_cache(db_path: str) -> None:
+    async with _category_cache_lock():
+        _CATEGORY_CACHE.pop(str(db_path), None)
 
 
 async def add_category(db_path: str, name: str) -> int:
@@ -31,7 +91,8 @@ async def add_category(db_path: str, name: str) -> int:
         )
         category_id = (await cursor.fetchone())["id"]
         await db.commit()
-        return category_id
+    await invalidate_categories_cache(db_path)
+    return category_id
 
 
 async def rename_category(db_path: str, category_id: int, name: str) -> bool:
@@ -40,14 +101,20 @@ async def rename_category(db_path: str, category_id: int, name: str) -> bool:
             "UPDATE categories SET name=? WHERE id=?", (name.strip(), category_id)
         )
         await db.commit()
-        return cursor.rowcount > 0
+        changed = cursor.rowcount > 0
+    if changed:
+        await invalidate_categories_cache(db_path)
+    return changed
 
 
 async def delete_category(db_path: str, category_id: int) -> bool:
     async with await connect(db_path) as db:
         cursor = await db.execute("DELETE FROM categories WHERE id=?", (category_id,))
         await db.commit()
-        return cursor.rowcount > 0
+        deleted = cursor.rowcount > 0
+    if deleted:
+        await invalidate_categories_cache(db_path)
+    return deleted
 
 
 async def create_program(db_path: str, data: dict[str, Any]) -> int:
@@ -134,11 +201,10 @@ async def search_programs(
     db_path: str, query: str = "", *, sort: str = "relevance", category_id: int | None = None,
     limit: int = 8, offset: int = 0,
 ) -> list[Any]:
+    started_at = perf_counter()
     text = query.strip().casefold()
     sql = """SELECT p.id, p.name, p.description, p.version, p.operating_system,
-    p.downloads, p.is_recommended, p.created_at,
-    (SELECT group_concat(c.name, ', ') FROM program_categories pc
-    JOIN categories c ON c.id=pc.category_id WHERE pc.program_id=p.id) AS category_name
+    p.downloads, p.is_recommended, p.created_at
     FROM programs p WHERE p.is_active=1"""
     params: list[Any] = []
     if text:
@@ -151,25 +217,26 @@ async def search_programs(
         sql += " AND EXISTS (SELECT 1 FROM program_categories pc WHERE pc.program_id=p.id AND pc.category_id=?)"
         params.append(category_id)
     order_by = {
-        "popular": "p.downloads DESC, lower(p.name)",
+        "popular": "p.downloads DESC, lower(p.name), p.id",
         "newest": "p.created_at DESC, p.id DESC",
         "relevance": """p.is_recommended DESC,
             CASE WHEN lower(p.name)=? THEN 0 WHEN lower(p.name) LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END,
-            p.downloads DESC, lower(p.name)""",
+            p.downloads DESC, lower(p.name), p.id""",
     }
     if sort not in order_by:
         raise ValueError("Noma’lum saralash turi.")
     if sort == "relevance" and text:
         params.extend((text, f"{text.replace('%', r'\%').replace('_', r'\_')}%"))
-    elif sort == "relevance":
-        sql += " ORDER BY p.is_recommended DESC, p.downloads DESC, lower(p.name) LIMIT ? OFFSET ?"
-        params.extend((limit, offset))
-        async with await connect(db_path) as db:
-            return await fetch_all(db, sql, tuple(params))
-    sql += f" ORDER BY {order_by[sort]} LIMIT ? OFFSET ?"
+    selected_order = (
+        "p.is_recommended DESC, p.downloads DESC, lower(p.name), p.id"
+        if sort == "relevance" and not text else order_by[sort]
+    )
+    sql += f" ORDER BY {selected_order} LIMIT ? OFFSET ?"
     params.extend((limit, offset))
     async with await connect(db_path) as db:
-        return await fetch_all(db, sql, tuple(params))
+        rows = await fetch_all(db, sql, tuple(params))
+    _log_read("catalog_search", started_at, len(rows))
+    return rows
 
 
 async def record_download(db_path: str, user_id: int, program_id: int) -> None:
@@ -278,7 +345,13 @@ async def toggle_program_active(db_path: str, program_id: int) -> bool:
 
 async def update_program_field(db_path: str, program_id: int, field: str, value: Any) -> bool:
     if field == "category_id":
-        category_ids = [] if value is None else [value]
+        if isinstance(value, str):
+            try:
+                category_ids = list(dict.fromkeys(int(item.strip()) for item in value.split(",")))
+            except ValueError as exc:
+                raise ValueError("Kategoriya ID raqamlarini vergul bilan yuboring.") from exc
+        else:
+            category_ids = [] if value is None else [value]
         return await replace_program_categories(db_path, program_id, category_ids)
     allowed_fields = {
         "name", "description", "category_id", "keywords", "version",

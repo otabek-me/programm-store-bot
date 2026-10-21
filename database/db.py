@@ -1,27 +1,39 @@
+import asyncio
+import logging
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import aiosqlite
 import psycopg
+from psycopg_pool import AsyncConnectionPool, PoolTimeout
 from psycopg.rows import dict_row
 
 from database.postgres_schema import POSTGRES_SCHEMA
 
 
-DatabaseErrors = (aiosqlite.Error, psycopg.Error)
+logger = logging.getLogger(__name__)
+
+DatabaseErrors = (aiosqlite.Error, psycopg.Error, PoolTimeout)
 DatabaseIntegrityErrors = (aiosqlite.IntegrityError, psycopg.IntegrityError)
 
 
 class _ConnectionContext:
-    def __init__(self, connection: Any, is_postgres: bool) -> None:
+    def __init__(
+        self, connection: Any, is_postgres: bool, pool: AsyncConnectionPool | None = None
+    ) -> None:
         self.connection = connection
         self.is_postgres = is_postgres
+        self.pool = pool
 
     async def __aenter__(self) -> "_ConnectionContext":
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:
-        await self.connection.close()
+        if self.pool is not None:
+            await self.pool.putconn(self.connection)
+        else:
+            await self.connection.close()
 
     def _adapt_query(self, query: str) -> str:
         if not self.is_postgres:
@@ -152,15 +164,73 @@ CREATE INDEX IF NOT EXISTS idx_requests_user ON software_requests(user_id);
 """
 
 
+async def _configure_postgres_connection(connection: Any) -> None:
+    await connection.execute("CREATE SCHEMA IF NOT EXISTS programm_store_bot")
+    await connection.commit()
+
+
+_POSTGRES_POOLS: dict[str, AsyncConnectionPool] = {}
+_POSTGRES_POOL_LOCK = asyncio.Lock()
+
+
+async def _postgres_pool(database_url: str) -> AsyncConnectionPool:
+    pool = _POSTGRES_POOLS.get(database_url)
+    if pool is not None:
+        return pool
+    async with _POSTGRES_POOL_LOCK:
+        pool = _POSTGRES_POOLS.get(database_url)
+        if pool is None:
+            started_at = perf_counter()
+            pool = AsyncConnectionPool(
+                conninfo=database_url,
+                min_size=0,
+                max_size=4,
+                timeout=10,
+                max_idle=60,
+                max_lifetime=1800,
+                reconnect_timeout=30,
+                kwargs={
+                    "row_factory": dict_row,
+                    "connect_timeout": 10,
+                    "prepare_threshold": None,
+                },
+                configure=_configure_postgres_connection,
+                open=False,
+            )
+            await pool.open(wait=True)
+            _POSTGRES_POOLS[database_url] = pool
+            logger.info(
+                "PostgreSQL pool opened",
+                extra={"duration_ms": round((perf_counter() - started_at) * 1000, 2)},
+            )
+        return pool
+
+
+async def close_postgres_pools() -> None:
+    async with _POSTGRES_POOL_LOCK:
+        pools = tuple(_POSTGRES_POOLS.values())
+        _POSTGRES_POOLS.clear()
+    for pool in pools:
+        await pool.close()
+
+
 async def connect(database: str | Path) -> _ConnectionContext:
     database_value = str(database)
     if database_value.startswith(("postgresql://", "postgres://")):
-        connection = await psycopg.AsyncConnection.connect(
-            database_value, row_factory=dict_row, connect_timeout=10, prepare_threshold=None
-        )
-        await connection.execute("CREATE SCHEMA IF NOT EXISTS programm_store_bot")
-        await connection.execute("SET LOCAL search_path TO programm_store_bot")
-        return _ConnectionContext(connection, is_postgres=True)
+        pool = await _postgres_pool(database_value)
+        started_at = perf_counter()
+        connection = await pool.getconn()
+        try:
+            await connection.execute("SET LOCAL search_path TO programm_store_bot")
+        except Exception:
+            await pool.putconn(connection)
+            raise
+        acquire_ms = round((perf_counter() - started_at) * 1000, 2)
+        if acquire_ms >= 250:
+            logger.warning("Slow PostgreSQL checkout", extra={"duration_ms": acquire_ms})
+        else:
+            logger.debug("PostgreSQL checkout", extra={"duration_ms": acquire_ms})
+        return _ConnectionContext(connection, is_postgres=True, pool=pool)
 
     path = Path(database)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,6 +242,7 @@ async def connect(database: str | Path) -> _ConnectionContext:
 
 
 async def init_db(database: str | Path, *, seed_categories: bool = True) -> None:
+    started_at = perf_counter()
     async with await connect(database) as db:
         schema = POSTGRES_SCHEMA if db.is_postgres else SCHEMA
         for statement in schema.split(";"):
@@ -194,3 +265,10 @@ async def init_db(database: str | Path, *, seed_categories: bool = True) -> None
                 SELECT id, category_id FROM programs WHERE category_id IS NOT NULL"""
             )
         await db.commit()
+    logger.info(
+        "Database schema ready",
+        extra={
+            "backend": "postgresql" if str(database).startswith(("postgresql://", "postgres://")) else "sqlite",
+            "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+        },
+    )

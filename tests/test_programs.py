@@ -1,13 +1,32 @@
+import sqlite3
+
 import pytest
 
 from database.repositories import (
     categories, create_program, get_program, record_download, search_programs,
+    update_program_field,
 )
 from admin.programs import _parse_category_ids
+from migrate_sqlite_to_postgres import _read_source
 
 
 def test_category_input_accepts_multiple_comma_separated_ids():
     assert _parse_category_ids("1,6", {1, 6}) == [1, 6]
+
+
+def test_sqlite_importer_restores_legacy_category_relation(tmp_path):
+    source_path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(source_path) as source:
+        source.executescript(
+            """CREATE TABLE categories(id INTEGER PRIMARY KEY, name TEXT);
+            CREATE TABLE programs(id INTEGER PRIMARY KEY, name TEXT, category_id INTEGER);
+            INSERT INTO categories(id, name) VALUES (6, 'Office');
+            INSERT INTO programs(id, name, category_id) VALUES (41, 'Legacy app', 6);"""
+        )
+
+    imported = _read_source(source_path)
+
+    assert imported["program_categories"] == (["program_id", "category_id"], [(41, 6)])
 
 
 @pytest.mark.asyncio
@@ -43,7 +62,26 @@ async def test_program_can_belong_to_multiple_categories(db_path):
 
     expected_names = {row["name"] for row in (await categories(db_path))[:2]}
     assert set(program["category_name"].split(", ")) == expected_names
-    assert all(any(row["id"] == program_id for row in result) for result in results)
+    assert all(sum(row["id"] == program_id for row in result) == 1 for result in results)
+
+
+@pytest.mark.asyncio
+async def test_legacy_category_field_accepts_comma_separated_ids(db_path):
+    category_ids = [row["id"] for row in (await categories(db_path))[:2]]
+    program_id = await create_program(db_path, {
+        "name": "Legacy category edit", "description": "Description",
+        "file_id": "fid", "file_unique_id": "fuid",
+    })
+
+    changed = await update_program_field(
+        db_path, program_id, "category_id", f"{category_ids[0]},{category_ids[1]}"
+    )
+    program = await get_program(db_path, program_id)
+    results = [await search_programs(db_path, "", category_id=category_id) for category_id in category_ids]
+
+    assert changed
+    assert len(program["category_name"].split(", ")) == 2
+    assert all(sum(row["id"] == program_id for row in result) == 1 for result in results)
 
 
 @pytest.mark.asyncio
