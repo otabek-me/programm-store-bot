@@ -486,6 +486,16 @@ async def create_broadcast_job(
     media_group_id: str | None = None,
 ) -> int:
     async with await connect(db_path) as db:
+        if db.is_postgres:
+            cursor = await db.execute(
+                """INSERT INTO broadcast_jobs(admin_id, source_chat_id, source_message_id, media_group_id, status)
+                VALUES (%s, %s, %s, %s, 'pending')
+                RETURNING id""",
+                (admin_id, source_chat_id, source_message_id, media_group_id),
+            )
+            row = await cursor.fetchone()
+            await db.commit()
+            return int(row["id"])
         cursor = await db.execute(
             """INSERT INTO broadcast_jobs(admin_id, source_chat_id, source_message_id, media_group_id, status)
             VALUES (?, ?, ?, ?, 'pending')""",
