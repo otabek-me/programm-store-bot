@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 from time import monotonic, perf_counter
 from typing import Any
 from weakref import WeakKeyDictionary
@@ -296,13 +297,23 @@ async def add_request_message(db_path: str, request_id: int, sender_id: int, mes
         await db.commit()
 
 
-async def requests(db_path: str, *, status: str | None = None, limit: int = 10, offset: int = 0) -> list[Any]:
+async def requests(
+    db_path: str, *, status: str | list[str] | None = None, limit: int = 10, offset: int = 0
+) -> list[Any]:
     async with await connect(db_path) as db:
-        if status:
+        if status is not None:
+            if isinstance(status, str):
+                return await fetch_all(
+                    db, """SELECT r.*, u.username, u.first_name FROM software_requests r
+                    JOIN users u ON u.user_id=r.user_id WHERE r.status=? ORDER BY r.id DESC LIMIT ? OFFSET ?""",
+                    (status, limit, offset),
+                )
+            placeholders = ", ".join("?" for _ in status)
             return await fetch_all(
-                db, """SELECT r.*, u.username, u.first_name FROM software_requests r
-                JOIN users u ON u.user_id=r.user_id WHERE r.status=? ORDER BY r.id DESC LIMIT ? OFFSET ?""",
-                (status, limit, offset),
+                db, f"""SELECT r.*, u.username, u.first_name FROM software_requests r
+                JOIN users u ON u.user_id=r.user_id WHERE r.status IN ({placeholders})
+                ORDER BY r.id DESC LIMIT ? OFFSET ?""",
+                (*status, limit, offset),
             )
         return await fetch_all(
             db, """SELECT r.*, u.username, u.first_name FROM software_requests r
@@ -466,5 +477,85 @@ async def log_broadcast(
             """INSERT INTO broadcast_logs(admin_id, message, recipient_count, sent_count, failed_count)
             VALUES (?, ?, ?, ?, ?)""",
             (admin_id, message, recipient_count, sent_count, failed_count),
+        )
+        await db.commit()
+
+
+async def create_broadcast_job(
+    db_path: str, admin_id: int, source_chat_id: int, source_message_id: int,
+    media_group_id: str | None = None,
+) -> int:
+    async with await connect(db_path) as db:
+        cursor = await db.execute(
+            """INSERT INTO broadcast_jobs(admin_id, source_chat_id, source_message_id, media_group_id, status)
+            VALUES (?, ?, ?, ?, 'pending')""",
+            (admin_id, source_chat_id, source_message_id, media_group_id),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def start_broadcast_job(db_path: str, job_id: int, recipient_count: int) -> None:
+    async with await connect(db_path) as db:
+        await db.execute(
+            """UPDATE broadcast_jobs SET status='running', started_at=?, recipient_count=?
+            WHERE id=? AND status='pending'""",
+            (datetime.now(timezone.utc).isoformat(), recipient_count, job_id),
+        )
+        await db.commit()
+
+
+async def cancel_broadcast_job(db_path: str, job_id: int) -> bool:
+    async with await connect(db_path) as db:
+        cursor = await db.execute(
+            """UPDATE broadcast_jobs SET status='cancelled', completed_at=?
+            WHERE id=? AND status='running'""",
+            (None, job_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def complete_broadcast_job(
+    db_path: str, job_id: int, sent_count: int, failed_count: int
+) -> None:
+    async with await connect(db_path) as db:
+        await db.execute(
+            """UPDATE broadcast_jobs SET status='completed', sent_count=?, failed_count=?,
+            completed_at=? WHERE id=? AND status='running'""",
+            (sent_count, failed_count, datetime.now(timezone.utc).isoformat(), job_id),
+        )
+        await db.commit()
+
+
+async def get_broadcast_job(db_path: str, job_id: int) -> dict | None:
+    async with await connect(db_path) as db:
+        cursor = await db.execute(
+            """SELECT * FROM broadcast_jobs WHERE id=?""",
+            (job_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def get_running_broadcast_job(db_path: str, admin_id: int) -> dict | None:
+    async with await connect(db_path) as db:
+        cursor = await db.execute(
+            """SELECT * FROM broadcast_jobs
+            WHERE admin_id=? AND status='running'
+            ORDER BY created_at DESC LIMIT 1""",
+            (admin_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def update_broadcast_job_progress(
+    db_path: str, job_id: int, sent_count: int, failed_count: int
+) -> None:
+    async with await connect(db_path) as db:
+        await db.execute(
+            """UPDATE broadcast_jobs SET sent_count=?, failed_count=? WHERE id=?""",
+            (sent_count, failed_count, job_id),
         )
         await db.commit()

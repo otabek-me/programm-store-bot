@@ -6,7 +6,7 @@ def main_menu() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="🔎 Dastur qidirish"), KeyboardButton(text="📂 Kategoriyalar")],
             [KeyboardButton(text="🆕 Yangi dasturlar"), KeyboardButton(text="🔥 Mashhur dasturlar")],
-            [KeyboardButton(text="📋 Dasturlar katalogi"), KeyboardButton(text="💬 Dastur so‘rash")],
+            [KeyboardButton(text="📋 Dasturlar katalogi")],
             [KeyboardButton(text="ℹ️ Bot haqida")],
         ],
         resize_keyboard=True,
@@ -64,8 +64,13 @@ def program_detail(program_id: int, *, admin: bool = False, active: bool = True)
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def request_confirm() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Yuborish", callback_data="request:confirm")],
-        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="request:cancel")],
-    ])
+def search_not_found_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📩 Ha, so'rov yuborish", callback_data="search:request"),
+                InlineKeyboardButton(text="🔎 Boshqa dastur qidirish", callback_data="search:new"),
+            ],
+            [InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="home")],
+        ]
+    )

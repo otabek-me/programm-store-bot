@@ -28,6 +28,8 @@ class CategoryForm(StatesGroup):
 class Broadcast(StatesGroup):
     message = State()
     confirm = State()
+    collecting_album = State()
+    sending = State()
 
 
 class RequestReply(StatesGroup):

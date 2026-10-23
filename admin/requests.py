@@ -37,15 +37,18 @@ async def requests_page(callback: CallbackQuery, db_path: str) -> None:
     await _show_requests(callback, db_path, page, answered=True)
 
 
+ACTIVE_STATUSES = ("pending", "in_progress")
+
+
 async def _show_requests(callback: CallbackQuery, db_path: str, page: int, answered: bool = False) -> None:
     if not answered:
         await callback.answer()
-    rows = await requests(db_path, limit=9, offset=page * 8)
+    rows = await requests(db_path, status=list(ACTIVE_STATUSES), limit=9, offset=page * 8)
     if not callback.message:
         return
     visible_rows = rows[:8]
     if not visible_rows:
-        await callback.message.answer("So‘rovlar yo‘q.")
+        await callback.message.answer("✅ Hozircha yangi so‘rovlar yo‘q")
         return
     for row in visible_rows:
         await callback.message.answer(

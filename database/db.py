@@ -161,6 +161,23 @@ CREATE INDEX IF NOT EXISTS idx_programs_created ON programs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_download_logs_date ON download_logs(downloaded_at);
 CREATE INDEX IF NOT EXISTS idx_requests_status ON software_requests(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_requests_user ON software_requests(user_id);
+CREATE TABLE IF NOT EXISTS broadcast_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_id INTEGER NOT NULL,
+    source_chat_id INTEGER NOT NULL,
+    source_message_id INTEGER NOT NULL,
+    media_group_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'running', 'cancelled', 'completed')),
+    recipient_count INTEGER NOT NULL DEFAULT 0,
+    sent_count INTEGER NOT NULL DEFAULT 0,
+    failed_count INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT,
+    completed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_broadcast_jobs_status ON broadcast_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_broadcast_jobs_admin ON broadcast_jobs(admin_id);
 """
 
 
